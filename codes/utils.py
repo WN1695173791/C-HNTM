@@ -3,10 +3,6 @@ import torch
 import pickle
 import numpy as np
 from gensim.models.coherencemodel import CoherenceModel
-try:
-    from scipy.special import logsumexp
-except:
-    from scipy.misc import logsumexp
 
 
 def get_device(device_id=0):
@@ -72,27 +68,23 @@ def calc_topic_coherence(topic_words, docs, dictionary):
         {"cv": [cv_score, cv_score_per_topic], "cw2v": ...}
     '''
     # cv_score
-    cv_model = CoherenceModel(topics=topic_words, texts=docs, dictionary=dictionary, coherence="c_v")
-    # # cv_score_per_topic = cv_model.get_coherence_per_topic()
+    cv_model = CoherenceModel(topics=topic_words, texts=docs, dictionary=dictionary, coherence="c_v", processes=1)
     cv_score = cv_model.get_coherence()
 
     # # cw2v_score
 
     # cuci_score
-    # cuci_model = CoherenceModel(topics=topic_words, texts=docs, dictionary=dictionary, coherence="c_uci")
-    # # cuci_score_per_topic = cuci_model.get_coherence_per_topic()
-    # cuci_score = cuci_model.get_coherence()
+    cuci_model = CoherenceModel(topics=topic_words, texts=docs, dictionary=dictionary, coherence="c_uci", processes=1)
+    cuci_score = cuci_model.get_coherence()
 
     # cnpmi_score
-    # cnpmi_model = CoherenceModel(topics=topic_words, texts=docs, dictionary=dictionary, coherence="c_npmi")
-    # cnpmi_score_per_topic = cnpmi_model.get_coherence_per_topic()
-    # cnpmi_score = cnpmi_model.get_coherence()
+    cnpmi_model = CoherenceModel(topics=topic_words, texts=docs, dictionary=dictionary, coherence="c_npmi", processes=1)
+    cnpmi_score = cnpmi_model.get_coherence()
 
     score_dict = {
-        "cv": [cv_score, None],
-        # "cw2v": [None, None],
-        # "cuci": [cuci_score, None],
-        # "cnpmi": [cnpmi_score, None]
+        "metric/cv": cv_score,
+        "metric/cuci": cuci_score,
+        "metric/cnpmi": cnpmi_score
     }
 
     return score_dict

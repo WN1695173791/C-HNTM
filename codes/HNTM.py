@@ -1,3 +1,4 @@
+from math import gamma
 import torch
 import torch.nn as nn 
 import torch.nn.functional as F
@@ -271,43 +272,43 @@ class C_HNTM(nn.Module):
         # q(z_i|x)
         # https://stats.stackexchange.com/questions/321947/expectation-of-the-softmax-transform-for-gaussian-multivariate-variables
         c = 1. / torch.sqrt(1 + torch.exp(logvar))
-        gamma = 1 - 1 / (1 + torch.exp(mu * c)) # gamma size=(batch_size, n_topic_leaf)
+        tau = F.softmax(torch.exp(mu * c) / (1 + torch.exp(mu * c)), dim=1) # tau size=(batch_size, n_topic_leaf)
 
         # q(r_i|x)
         # tau size=(batch_size, n_topic_root)
-        tau = predict_proba_gmm_doc(x, vecs, self.gmm_mu, torch.exp(self.gmm_logvar), torch.exp(self.gmm_pi)) + 1e-9
+        gamma = predict_proba_gmm_doc(x, vecs, self.gmm_mu, torch.exp(self.gmm_logvar), torch.exp(self.gmm_pi)) + 1e-9
 
         # (1)
         # p(x|z)
-        log_p_reconst = (torch.mm(x, torch.log(beta)) + torch.mm(1-x, torch.log(1-beta))) / x.shape[1] # vocab_size
-        l1 = - torch.mean(torch.sum(gamma * log_p_reconst, axis=1))
+        log_p_reconst = (torch.mm(x, torch.log(beta)) + torch.mm(1-x, torch.log(1-beta)))# vocab_size
+        # print("tau")
+        # print(tau)
+        # print(log_p_reconst)
+        l1 = torch.mean(torch.sum(tau * log_p_reconst, axis=1))
         # (2)
-        l2 = - torch.mean(torch.sum(tau * torch.mm(gamma, torch.log(alpha)), axis=1)) / len(alpha)
+        l2 = torch.mean(torch.sum(gamma * torch.mm(tau, torch.log(alpha)), axis=1)) / len(alpha)
         # (3)
-        l3 = - torch.mean(torch.mm(tau, torch.log(torch.exp(self.gmm_pi)).unsqueeze(1)))
+        l3 = torch.mean(torch.mm(gamma, torch.log(torch.exp(self.gmm_pi)).unsqueeze(1)))
         # (4)
-        l4 = - torch.mean(torch.sum(gamma * torch.log(gamma), axis=1))
+        l4 = torch.mean(torch.sum(tau * torch.log(tau), axis=1))
         # (5)
-        l5 = - torch.mean(torch.sum(tau * torch.log(tau), axis=1))
-        loss = l1 + l2 + l3 + l4 + l5
+        l5 = torch.mean(torch.sum(gamma * torch.log(gamma), axis=1))
+        loss = -(l1 + l2 + l3 - l4 - l5)
+        loss_dict = {
+            "l1": -l1,
+            "l2": -l2,
+            "l3": -l3,
+            "l4": l4,
+            "l5": l5,
+            "loss": loss
+        }
         # print("loss={:.5f} l1_loss={:.5f} l2_loss={:.5f} l3_loss={:.5f} l4_loss={:.5f} l5_loss={:.5f}".format(loss, l1, l2, l3, l4, l5))
 
-        return loss
+        return loss_dict
 
 
         
 
 if __name__ == "__main__":
-    model = MyHNTM(
-            topic_model_name="gsm",
-            encode_dims=[1006, 1024, 512, 300],
-            decode_dims=[300, 512, 1006],
-            cluster_decode_dims=[1006, 512, 256, 30],
-            pretrain_cluster_model_path="../models/pretrain_cluster_model.pkl"
-    )
-    # for k, v in model.state_dict().items():
-    #     print(k) # 参数名称，如encoder.enc_0.weight
-    #     print(v.shape) # 参数值，如k.shape = torch.Size([1024, 10000])
-
-
-
+    model = C_HNTM(10654, 20, 100, [2048, 1024, 512, 100], 300)
+    print(model.beta.weight)

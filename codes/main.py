@@ -1,7 +1,10 @@
 import os
+import time
+import wandb
 import traceback
 import argparse
-from run import *
+
+from run import C_HNTM_Runner
 
 parser = argparse.ArgumentParser("NTM")
 parser.add_argument("--data", type=str, default="20news")
@@ -14,6 +17,13 @@ parser.add_argument("--momentum", type=float, default=0.9)
 
 args = parser.parse_args()
 
+# wandb configuration
+wandb.login()
+wandb.init(
+    project = "c_hntm",
+    name = time.strftime("%Y-%m-%d-%H-%M", time.localtime()),
+    config=args
+)
 
 
 def main():
