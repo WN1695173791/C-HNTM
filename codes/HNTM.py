@@ -180,7 +180,7 @@ class MyHNTM(nn.Module):
 
 
 class C_HNTM(nn.Module):
-    def __init__(self, vocab_size, n_topic_root, n_topic_leaf, encode_dims, embed_dim):
+    def __init__(self, vocab_size, n_topic_root, n_topic_leaf, encode_dims, decode_dims, embed_dim):
         '''
         基于VaDE改造的层次神经网络。
         数据流：
@@ -203,11 +203,15 @@ class C_HNTM(nn.Module):
             nn.Linear(encode_dims[i], encode_dims[i+1]) for i in range(len(encode_dims)-2)
         ])
 
+        self.decoder = nn.ModuleList([
+            nn.Linear(decode_dims[i], decode_dims[i+1]) for i in range(len(encode_dims)-1)
+        ])
+
         self.fc_mu = nn.Linear(encode_dims[-2], encode_dims[-1])
         self.fc_logvar = nn.Linear(encode_dims[-2], encode_dims[-1])
 
-        self.decoder = None
-        self.beta = nn.Linear(n_topic_leaf, vocab_size)
+        # self.decoder = None
+        # self.beta = nn.Linear(n_topic_leaf, vocab_size)
         self.alpha = nn.Linear(n_topic_root, n_topic_leaf)
 
         self.dropout = nn.Dropout(p=0.01)
@@ -244,9 +248,13 @@ class C_HNTM(nn.Module):
         return mu, logvar
 
     def decode(self, z):
-        weight = self.beta.weight
-        weight = F.softmax(weight, dim=0).transpose(1,0)
-        x_reconst = torch.mm(z, weight)
+        # weight = self.beta.weight
+        # weight = F.softmax(weight, dim=0).transpose(1,0)
+        # x_reconst = torch.mm(z, weight)
+        hid = z
+        for i in range(len(self.decoder)-1):
+            hid = F.relu(self.dropout(self.decoder[i](hid)))
+        x_reconst = self.decoder[-1](hid) 
         return x_reconst
 
     def forward(self, x):
@@ -254,6 +262,17 @@ class C_HNTM(nn.Module):
         z = self.reparameterize(mu, logvar)
         recon_x = self.decode(z)
         return recon_x, mu, logvar
+
+    def pretrain_loss(self, x, x_reconst, mu, logvar):
+        reconst_loss = F.binary_cross_entropy(F.softmax(x_reconst,dim=1), x, reduction="mean")
+        kld_loss =  -0.5 * torch.sum(1+logvar-mu.pow(2)-logvar.exp()) / len(x)
+        loss = reconst_loss + kld_loss
+        loss_dict = {
+            "reconst_loss": reconst_loss,
+            "kld_loss": kld_loss,
+            "loss": loss
+        }
+        return loss_dict
 
     def loss(self, x, x_reconst, mu, logvar, vecs):
         '''
@@ -263,11 +282,8 @@ class C_HNTM(nn.Module):
         vecs: size=(vocab_size, embed_dim)
         '''
         alpha = F.softmax(self.alpha.weight, dim=0) # size=(n_topic_leaf, n_topic_root)
-        beta = F.softmax(self.beta.weight, dim=0) # size=(vocab_size, n_topic_leaf)
-
-        # self.gmm_mu size=(n_topic_root, embed_dim)
-        # self.gmm_logvar size=(n_topic_root, embed_dim)
-        # self.gmm_pi size=(n_topic_root)
+        # beta = F.softmax(self.beta.weight, dim=0) # size=(vocab_size, n_topic_leaf)
+        n_topic_leaf = alpha.shape[0]
 
         # q(z_i|x)
         # https://stats.stackexchange.com/questions/321947/expectation-of-the-softmax-transform-for-gaussian-multivariate-variables
@@ -276,19 +292,23 @@ class C_HNTM(nn.Module):
 
         # q(r_i|x)
         # tau size=(batch_size, n_topic_root)
-        gamma = predict_proba_gmm_doc(x, vecs, self.gmm_mu, torch.exp(self.gmm_logvar), torch.exp(self.gmm_pi)) + 1e-9
+        # self.gmm_mu size=(n_topic_root, embed_dim)
+        # self.gmm_logvar size=(n_topic_root, embed_dim)
+        # self.weights size=(n_topic_root)
+        gamma = predict_proba_gmm_doc(x, vecs, self.gmm_mu, torch.exp(self.gmm_logvar), self.weights) + 1e-9
 
         # (1)
         # p(x|z)
-        log_p_reconst = (torch.mm(x, torch.log(beta)) + torch.mm(1-x, torch.log(1-beta)))# vocab_size
-        # print("tau")
-        # print(tau)
-        # print(log_p_reconst)
-        l1 = torch.mean(torch.sum(tau * log_p_reconst, axis=1))
+        # log_p_reconst = (torch.mm(x, torch.log(beta)) + torch.mm(1-x, torch.log(1-beta)))# vocab_size
+        # log_p_reconst = torch.mm(x, torch.log(beta))# (batch_size, n_topic_leaf)
+        # l1 = torch.mean(torch.sum(tau * log_p_reconst, axis=1))
+        # p_x_z = torch.softmax(self.decode(torch.eye(n_topic_leaf)))
+        # l1 = - F.binary_cross_entropy(F.softmax(x_reconst,dim=1), x, reduction="mean")
+        l1 = torch.mean(torch.sum(x * torch.log_softmax(x_reconst, dim=1), dim=1))
         # (2)
-        l2 = torch.mean(torch.sum(gamma * torch.mm(tau, torch.log(alpha)), axis=1)) / len(alpha)
+        l2 = torch.mean(torch.sum(gamma * torch.mm(tau, torch.log(alpha)), axis=1))
         # (3)
-        l3 = torch.mean(torch.mm(gamma, torch.log(torch.exp(self.gmm_pi)).unsqueeze(1)))
+        l3 = torch.mean(torch.mm(gamma, torch.log(self.weights).unsqueeze(1))) # 注意此处使用self.weights而不是self.gmm_pi
         # (4)
         l4 = torch.mean(torch.sum(tau * torch.log(tau), axis=1))
         # (5)
@@ -302,12 +322,71 @@ class C_HNTM(nn.Module):
             "l5": l5,
             "loss": loss
         }
-        # print("loss={:.5f} l1_loss={:.5f} l2_loss={:.5f} l3_loss={:.5f} l4_loss={:.5f} l5_loss={:.5f}".format(loss, l1, l2, l3, l4, l5))
+        # print("loss={:.5f} l1_loss={:.5f} l2_loss={:.5f} l3_loss={:.5f} l4_loss={:.5f} l5_loss={:.5f}".format(loss, -l1, -l2, -l3, l4, l5))
 
         return loss_dict
 
 
+class C_HNTM_Pretrain(nn.Module):
+    def __init__(self, vocab_size, n_topic_root, n_topic_leaf, encode_dims, decode_dims, embed_dim):
+        super().__init__()
+        self.encoder = nn.ModuleList([
+            nn.Linear(encode_dims[i], encode_dims[i+1]) for i in range(len(encode_dims)-2)
+        ])
+        self.decoder = nn.ModuleList([
+            nn.Linear(decode_dims[i], decode_dims[i+1]) for i in range(len(encode_dims)-1)
+        ])
+        self.fc_mu = nn.Linear(encode_dims[-2], encode_dims[-1])
+        self.fc_logvar = nn.Linear(encode_dims[-2], encode_dims[-1])
+        self.dropout = nn.Dropout(p=0.01)
+
+    def reparameterize(self, mu, logvar):
+        '''
+        重参方法，基于encoder给出的期望和对数方差生成z。
+        '''
+        # torch.randn_like(input): 返回和input大小一致且服从正态分布的tensor
+        eps = torch.randn_like(mu)
+        std = torch.exp(logvar/2)
+        z = mu + eps*std
+        return z        
+
+    def encode(self, x):
+        hid = x
+        for i in range(len(self.encoder)):
+            hid = F.relu(self.dropout(self.encoder[i](hid)))
+        mu = self.fc_mu(hid)
+        logvar = self.fc_logvar(hid)
+        return mu, logvar
+
+    def decode(self, z):
+        # weight = self.beta.weight
+        # weight = F.softmax(weight, dim=0).transpose(1,0)
+        # x_reconst = torch.mm(z, weight)
+        hid = z
+        for i in range(len(self.decoder)-1):
+            hid = F.relu(self.dropout(self.decoder[i](hid)))
+        x_reconst = self.decoder[-1](hid) 
+        return x_reconst
+
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        recon_x = self.decode(z)
+        return recon_x, mu, logvar
+
+    def loss(self, x, x_reconst, mu, logvar):
+        # reconst_loss = F.binary_cross_entropy(F.softmax(x_reconst,dim=1), x, reduction="mean")
+        reconst_loss = - torch.mean(torch.sum(x * torch.log_softmax(x_reconst, dim=1), dim=1))
+        kld_loss =  -0.5 * torch.sum(1+logvar-mu.pow(2)-logvar.exp()) / len(x)
+        loss = reconst_loss + kld_loss
+        loss_dict = {
+            "reconst_loss": reconst_loss,
+            "kld_loss": kld_loss,
+            "loss": loss
+        }
+        return loss_dict        
         
+    
 
 if __name__ == "__main__":
     model = C_HNTM(10654, 20, 100, [2048, 1024, 512, 100], 300)

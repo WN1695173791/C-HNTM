@@ -1,4 +1,5 @@
 import os
+import wandb
 import torch
 import pickle
 import numpy as np
@@ -82,9 +83,9 @@ def calc_topic_coherence(topic_words, docs, dictionary):
     cnpmi_score = cnpmi_model.get_coherence()
 
     score_dict = {
-        "metric/cv": cv_score,
-        "metric/cuci": cuci_score,
-        "metric/cnpmi": cnpmi_score
+        "cv": cv_score,
+        "cuci": cuci_score,
+        "cnpmi": cnpmi_score
     }
 
     return score_dict
@@ -171,6 +172,11 @@ def predict_proba_gmm_doc(doc_X, vecs, means, covariances, weights):
     res = torch.stack(res)
     return res
 
+
+
+def wandb_log(type, log_dict):
+    new_log_dict = {"{}/{}".format(type, k): v for k,v in log_dict.items()}
+    wandb.log(new_log_dict)
 
 
 if __name__ == "__main__":

@@ -1,14 +1,15 @@
-# 模型文件
 /models/
 ckpt/
 .pretrain/
 .vscode/
+/data/
+wandb/
 
-# python相关
+
 __pycache__/
 *.pyc
+*.md
 
 .DS_Store
 
-/data/
-wandb/
+

@@ -603,12 +603,12 @@ class C_HNTM_Runner:
         # 加载参数
         self.args = args
         self.R = args.n_cluster # 顶层主题数
-        self.K = args.n_topic # 底层主题数
+        self.Z = args.n_topic # 底层主题数
         self.vocab_size = self.dataset.vocab_size
-        encode_dims = [self.vocab_size, 1024, 512, self.K] # vae模型结构参数
+        encode_dims = [self.vocab_size, 1024, 512, self.Z] # vae模型结构参数
         embed_dim = self.vecs.shape[1]
 
-        self.model = C_HNTM(self.vocab_size, self.R, self.K, encode_dims, embed_dim)
+        self.model = C_HNTM(self.vocab_size, self.R, self.Z, encode_dims, embed_dim)
         if mode == "train":
             self.pretrain_GMM() # 预训练GMM模型
             print("GMM模型预训练完成")
